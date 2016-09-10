@@ -61,7 +61,7 @@ const static double d2r = M_PI/180; //degrees to radians
 const static double r2d = 180/M_PI; //radians to degrees
 
 static struct param_pass data1;		//local data structure that needs mutex protection
-tf::Quaternion Q_ori[2];
+btQuaternion Q_ori[2];
 pthread_mutexattr_t data1MutexAttr;
 pthread_mutex_t data1Mutex;
 
@@ -141,8 +141,8 @@ void teleopIntoDS1(struct u_struct *us_t)
     struct position p;
     int i, armidx, armserial;
     pthread_mutex_lock(&data1Mutex);
-    tf::Quaternion q_temp;
-    tf::Matrix3x3 rot_mx_temp;
+    btQuaternion q_temp;
+    btMatrix3x3 rot_mx_temp;
 
 
     // TODO:: APPLY TRANSFORM TO INCOMING DATA
@@ -280,7 +280,7 @@ void updateMasterRelativeOrigin(struct device *device0)
 {
 	int armidx;
     struct orientation *_ori;
-    tf::Matrix3x3 tmpmx;
+    btMatrix3x3 tmpmx;
 
     // update data1 (network position desired) to device0.position_desired (device position desired)
     //   This eliminates accumulation of deltas from network while robot is idle.
@@ -314,6 +314,16 @@ void updateMasterRelativeOrigin(struct device *device0)
 
     return;
 }
+
+void setSurgeonMode(int pedalstate)
+{
+    pthread_mutex_lock(&data1Mutex);
+    data1.surgeon_mode = pedalstate;
+    pthread_mutex_unlock(&data1Mutex);
+    isUpdated = TRUE;
+    log_msg("mode %d",data1.surgeon_mode);
+}
+
 
 ///
 /// PUBLISH ROS DATA
@@ -354,7 +364,7 @@ int init_ravenstate_publishing(ros::NodeHandle &n){
     vis_pub2 = n.advertise<visualization_msgs::Marker>( "visualization_marker2", 0 );
 
 
-	sub_automove = n.subscribe<raven_automove>("raven_automove", 1, autoincrCallback, ros::TransportHints().unreliable() );
+    sub_automove = n.subscribe<raven_automove>("raven_automove", 1, autoincrCallback, ros::TransportHints().unreliable() );
 
     return 0;
 }
@@ -372,27 +382,26 @@ int init_ravenstate_publishing(ros::NodeHandle &n){
  */
 void autoincrCallback(raven_2::raven_automove msg)
 {
-  tf::Transform in_incr[2];
-  tf::transformMsgToTF(msg.tf_incr[0], in_incr[0]);
-  tf::transformMsgToTF(msg.tf_incr[1], in_incr[1]);
+   btTransform in_incr[2];
+   tf::transformMsgToTF(msg.tf_incr[0], in_incr[0]);
+   tf::transformMsgToTF(msg.tf_incr[1], in_incr[1]);
 
   pthread_mutex_lock(&data1Mutex);
-
   for (int i=0;i<2;i++)
     {
       //add position increment
-      tf::Vector3 tmpvec = in_incr[i].getOrigin();
+      btVector3 tmpvec = in_incr[i].getOrigin();
       data1.xd[i].x += int(tmpvec[0]);
       data1.xd[i].y += int(tmpvec[1]);
       data1.xd[i].z += int(tmpvec[2]);
 
       //add rotation increment
-      tf::Quaternion q_temp(in_incr[i].getRotation());
-      if (q_temp != tf::Quaternion::getIdentity())
+      btQuaternion q_temp(in_incr[i].getRotation());
+      if (q_temp != btQuaternion::getIdentity())
 	{
 	  int armidx    = USBBoards.boards[i]==GREEN_ARM_SERIAL ? 1 : 0;
 	  Q_ori[armidx] = q_temp*Q_ori[armidx];
-	  tf::Matrix3x3 rot_mx_temp(Q_ori[armidx]);
+	  btMatrix3x3 rot_mx_temp(Q_ori[armidx]);
 	  for (int j=0;j<3;j++)
 	    for (int k=0;k<3;k++)
 	      data1.rd[i].R[j][k] = rot_mx_temp[j][k];
@@ -400,6 +409,9 @@ void autoincrCallback(raven_2::raven_automove msg)
     }
 
   pthread_mutex_unlock(&data1Mutex);
+  isUpdated = TRUE;
+
+  
 }
 
 
@@ -610,12 +622,12 @@ void publish_marker(struct robot_device* device0)
 {
     visualization_msgs::Marker marker1, marker2;
     geometry_msgs::Point p, px,py,pz;
-    tf::Quaternion bq;
+    btQuaternion bq;
     struct orientation* _ori;
-    tf::Matrix3x3 xform;
+    btMatrix3x3 xform;
 
     visualization_msgs::Marker axes[3];
-    tf::Quaternion axq, oriq;
+    btQuaternion axq, oriq;
 
     int left,right;
 
